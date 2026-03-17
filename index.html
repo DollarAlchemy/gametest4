@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Forest Adventure Prototype</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #0b120d;
+      font-family: Arial, sans-serif;
+      color: white;
+    }
+
+    #ui {
+      position: fixed;
+      top: 14px;
+      left: 14px;
+      z-index: 10;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(6px);
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 12px;
+      padding: 12px 14px;
+      max-width: 320px;
+      line-height: 1.4;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    }
+
+    #ui h1 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+
+    #ui p {
+      margin: 6px 0;
+      font-size: 13px;
+      opacity: 0.95;
+    }
+
+    #centerPrompt {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 20;
+      background: rgba(0, 0, 0, 0.35);
+      text-align: center;
+      padding: 24px;
+    }
+
+    #centerPrompt .panel {
+      background: rgba(10, 18, 12, 0.86);
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 18px;
+      padding: 24px;
+      max-width: 460px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.4);
+    }
+
+    #centerPrompt h2 {
+      margin-top: 0;
+      font-size: 28px;
+    }
+
+    #centerPrompt button {
+      margin-top: 14px;
+      padding: 12px 18px;
+      border: 0;
+      border-radius: 10px;
+      font-size: 15px;
+      cursor: pointer;
+      background: #86d98f;
+      color: #102214;
+      font-weight: bold;
+    }
+
+    #crosshair {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      width: 10px;
+      height: 10px;
+      transform: translate(-50%, -50%);
+      z-index: 8;
+      pointer-events: none;
+    }
+
+    #crosshair::before,
+    #crosshair::after {
+      content: "";
+      position: absolute;
+      background: rgba(255,255,255,0.8);
+    }
+
+    #crosshair::before {
+      left: 4px;
+      top: -4px;
+      width: 2px;
+      height: 18px;
+    }
+
+    #crosshair::after {
+      left: -4px;
+      top: 4px;
+      width: 18px;
+      height: 2px;
+    }
+
+    #message {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 12;
+      background: rgba(0,0,0,0.45);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 999px;
+      padding: 10px 18px;
+      font-size: 14px;
+      opacity: 0;
+      transition: opacity 0.25s;
+      pointer-events: none;
+    }
+
+    #message.show {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <h1>Forest Adventure</h1>
+    <p><strong>Move:</strong> WASD</p>
+    <p><strong>Look:</strong> Mouse</p>
+    <p><strong>Jump:</strong> Space</p>
+    <p><strong>Collect:</strong> E</p>
+    <p><strong>Run:</strong> Shift</p>
+    <p><strong>Collected:</strong> <span id="count">0</span> / <span id="total">0</span></p>
+    <p id="hint">Walk the forest and gather glowing forest spirits.</p>
+  </div>
+
+  <div id="crosshair"></div>
+  <div id="message"></div>
+
+  <div id="centerPrompt">
+    <div class="panel">
+      <h2>Enter the Forest</h2>
+      <p>This is a simple 3D browser prototype: roam a large forest, look around, and collect glowing objects.</p>
+      <p>Click below, then use your mouse and keyboard to explore.</p>
+      <button id="startBtn">Start Exploring</button>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0xa7c7a2, 30, 210);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.setClearColor(0xa7c7a2);
+    document.body.appendChild(renderer.domElement);
+
+    const uiCount = document.getElementById('count');
+    const uiTotal = document.getElementById('total');
+    const hint = document.getElementById('hint');
+    const centerPrompt = document.getElementById('centerPrompt');
+    const startBtn = document.getElementById('startBtn');
+    const message = document.getElementById('message');
+
+    function flashMessage(text) {
+      message.textContent = text;
+      message.classList.add('show');
+      clearTimeout(flashMessage._timer);
+      flashMessage._timer = setTimeout(() => {
+        message.classList.remove('show');
+      }, 1600);
+    }
+
+    const hemiLight = new THREE.HemisphereLight(0xdff7d8, 0x3d4a2d, 1.4);
+    scene.add(hemiLight);
+
+    const sun = new THREE.DirectionalLight(0xffffff, 1.05);
+    sun.position.set(40, 60, 10);
+    sun.castShadow = true;
+    sun.shadow.mapSize.width = 2048;
+    sun.shadow.mapSize.height = 2048;
+    sun.shadow.camera.left = -120;
+    sun.shadow.camera.right = 120;
+    sun.shadow.camera.top = 120;
+    sun.shadow.camera.bottom = -120;
+    scene.add(sun);
+
+    const groundGeo = new THREE.PlaneGeometry(420, 420, 100, 100);
+    const groundPos = groundGeo.attributes.position;
+    for (let i = 0; i < groundPos.count; i++) {
+      const x = groundPos.getX(i);
+      const y = groundPos.getY(i);
+      const height = Math.sin(x * 0.045) * 1.2 + Math.cos(y * 0.04) * 1.0 + Math.sin((x + y) * 0.02) * 1.6;
+      groundPos.setZ(i, height);
+    }
+    groundGeo.computeVertexNormals();
+
+    const groundMat = new THREE.MeshStandardMaterial({
+      color: 0x506d42,
+      roughness: 1,
+      metalness: 0,
+    });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const ambientPatches = new THREE.Group();
+    scene.add(ambientPatches);
+    const patchGeo = new THREE.CircleGeometry(1.4, 7);
+    const patchMat = new THREE.MeshStandardMaterial({ color: 0x5f8a4c, roughness: 1 });
+    for (let i = 0; i < 240; i++) {
+      const patch = new THREE.Mesh(patchGeo, patchMat);
+      patch.rotation.x = -Math.PI / 2;
+      patch.position.set((Math.random() - 0.5) * 380, 0.03, (Math.random() - 0.5) * 380);
+      patch.scale.setScalar(Math.random() * 1.5 + 0.5);
+      ambientPatches.add(patch);
+    }
+
+    function groundHeightAt(x, z) {
+      return Math.sin(x * 0.045) * 1.2 + Math.cos(z * 0.04) * 1.0 + Math.sin((x + z) * 0.02) * 1.6;
+    }
+
+    const forest = new THREE.Group();
+    scene.add(forest);
+
+    const trunkGeo = new THREE.CylinderGeometry(0.45, 0.65, 8, 8);
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6a4528, roughness: 1 });
+    const leavesGeo = new THREE.ConeGeometry(3.4, 8, 10);
+    const leavesMat = new THREE.MeshStandardMaterial({ color: 0x2f6a31, roughness: 1 });
+
+    const treePositions = [];
+    for (let i = 0; i < 420; i++) {
+      const x = (Math.random() - 0.5) * 360;
+      const z = (Math.random() - 0.5) * 360;
+      if (Math.abs(x) < 8 && Math.abs(z) < 8) continue;
+
+      const y = groundHeightAt(x, z);
+      const tree = new THREE.Group();
+
+      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+      trunk.castShadow = true;
+      trunk.receiveShadow = true;
+      trunk.position.y = 4;
+      tree.add(trunk);
+
+      const crown1 = new THREE.Mesh(leavesGeo, leavesMat);
+      crown1.castShadow = true;
+      crown1.position.y = 8.5;
+      tree.add(crown1);
+
+      const crown2 = new THREE.Mesh(leavesGeo, leavesMat);
+      crown2.castShadow = true;
+      crown2.scale.setScalar(0.8);
+      crown2.position.y = 11.5;
+      tree.add(crown2);
+
+      const scale = 0.7 + Math.random() * 1.2;
+      tree.scale.setScalar(scale);
+      tree.position.set(x, y, z);
+      forest.add(tree);
+      treePositions.push({ x, z, radius: 2.6 * scale });
+    }
+
+    const rockGeo = new THREE.DodecahedronGeometry(1.2, 0);
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x7d817c, roughness: 1 });
+    for (let i = 0; i < 90; i++) {
+      const rock = new THREE.Mesh(rockGeo, rockMat);
+      const x = (Math.random() - 0.5) * 360;
+      const z = (Math.random() - 0.5) * 360;
+      rock.position.set(x, groundHeightAt(x, z) + 0.75, z);
+      const s = Math.random() * 1.6 + 0.5;
+      rock.scale.set(s, s * 0.7, s);
+      rock.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+      rock.castShadow = true;
+      rock.receiveShadow = true;
+      scene.add(rock);
+    }
+
+    const collectibles = [];
+    const collectibleGroup = new THREE.Group();
+    scene.add(collectibleGroup);
+
+    const orbGeo = new THREE.SphereGeometry(0.42, 18, 18);
+    const orbMat = new THREE.MeshStandardMaterial({
+      color: 0xb8ffb2,
+      emissive: 0x66ff99,
+      emissiveIntensity: 1.5,
+      roughness: 0.4,
+      metalness: 0.1
+    });
+
+    for (let i = 0; i < 24; i++) {
+      const orb = new THREE.Mesh(orbGeo, orbMat.clone());
+      const light = new THREE.PointLight(0x88ffb8, 1.4, 8, 2);
+      const x = (Math.random() - 0.5) * 300;
+      const z = (Math.random() - 0.5) * 300;
+      const y = groundHeightAt(x, z) + 1.5;
+      orb.position.set(x, y, z);
+      light.position.copy(orb.position);
+      orb.userData.baseY = y;
+      orb.userData.collected = false;
+      collectibleGroup.add(orb);
+      scene.add(light);
+      collectibles.push({ mesh: orb, light });
+    }
+
+    uiTotal.textContent = collectibles.length;
+
+    const starsGeo = new THREE.BufferGeometry();
+    const starVerts = [];
+    for (let i = 0; i < 1200; i++) {
+      starVerts.push((Math.random() - 0.5) * 900, Math.random() * 240 + 70, (Math.random() - 0.5) * 900);
+    }
+    starsGeo.setAttribute('position', new THREE.Float32BufferAttribute(starVerts, 3));
+    const starsMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.8, sizeAttenuation: true });
+    const stars = new THREE.Points(starsGeo, starsMat);
+    scene.add(stars);
+
+    const player = {
+      position: new THREE.Vector3(0, groundHeightAt(0, 0) + 2, 0),
+      velocity: new THREE.Vector3(),
+      yaw: 0,
+      pitch: 0,
+      speed: 10,
+      runMultiplier: 1.8,
+      height: 2,
+      radius: 0.6,
+      onGround: false,
+      collected: 0,
+    };
+
+    camera.position.copy(player.position);
+
+    const keys = {};
+    let pointerLocked = false;
+
+    document.addEventListener('keydown', (e) => {
+      keys[e.code] = true;
+
+      if (e.code === 'KeyE') {
+        attemptCollect();
+      }
+    });
+
+    document.addEventListener('keyup', (e) => {
+      keys[e.code] = false;
+    });
+
+    startBtn.addEventListener('click', () => {
+      renderer.domElement.requestPointerLock();
+    });
+
+    document.addEventListener('pointerlockchange', () => {
+      pointerLocked = document.pointerLockElement === renderer.domElement;
+      centerPrompt.style.display = pointerLocked ? 'none' : 'flex';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!pointerLocked) return;
+      player.yaw -= e.movementX * 0.0022;
+      player.pitch -= e.movementY * 0.0022;
+      player.pitch = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, player.pitch));
+    });
+
+    function attemptCollect() {
+      let nearest = null;
+      let nearestDist = Infinity;
+
+      const forward = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(player.pitch, player.yaw, 0, 'YXZ'));
+
+      for (const item of collectibles) {
+        if (item.mesh.userData.collected) continue;
+        const dist = player.position.distanceTo(item.mesh.position);
+        if (dist > 4.2) continue;
+
+        const dir = item.mesh.position.clone().sub(player.position).normalize();
+        const facing = dir.dot(forward);
+        if (facing < 0.65) continue;
+
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          nearest = item;
+        }
+      }
+
+      if (nearest) {
+        nearest.mesh.userData.collected = true;
+        nearest.mesh.visible = false;
+        nearest.light.visible = false;
+        player.collected++;
+        uiCount.textContent = player.collected;
+        flashMessage('Collected a forest spirit');
+
+        if (player.collected === collectibles.length) {
+          hint.textContent = 'You found every forest spirit in the woods.';
+          flashMessage('All collectibles gathered');
+        }
+      }
+    }
+
+    function collideWithTrees(nextPos) {
+      for (const tree of treePositions) {
+        const dx = nextPos.x - tree.x;
+        const dz = nextPos.z - tree.z;
+        const distSq = dx * dx + dz * dz;
+        const minDist = player.radius + tree.radius;
+        if (distSq < minDist * minDist) {
+          const dist = Math.sqrt(distSq) || 0.0001;
+          const push = (minDist - dist);
+          nextPos.x += (dx / dist) * push;
+          nextPos.z += (dz / dist) * push;
+        }
+      }
+    }
+
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.033);
+      const time = performance.now() * 0.001;
+
+      const baseSpeed = keys.ShiftLeft || keys.ShiftRight ? player.speed * player.runMultiplier : player.speed;
+      const input = new THREE.Vector3();
+      if (keys.KeyW) input.z -= 1;
+      if (keys.KeyS) input.z += 1;
+      if (keys.KeyA) input.x -= 1;
+      if (keys.KeyD) input.x += 1;
+      if (input.lengthSq() > 0) input.normalize();
+
+      const move = new THREE.Vector3(input.x, 0, input.z);
+      move.applyAxisAngle(new THREE.Vector3(0, 1, 0), player.yaw);
+
+      player.velocity.x = move.x * baseSpeed;
+      player.velocity.z = move.z * baseSpeed;
+
+      if (player.onGround && keys.Space) {
+        player.velocity.y = 8.5;
+        player.onGround = false;
+      }
+
+      player.velocity.y -= 20 * dt;
+
+      const nextPos = player.position.clone();
+      nextPos.x += player.velocity.x * dt;
+      nextPos.z += player.velocity.z * dt;
+      collideWithTrees(nextPos);
+
+      nextPos.y += player.velocity.y * dt;
+      const floorY = groundHeightAt(nextPos.x, nextPos.z) + player.height;
+      if (nextPos.y <= floorY) {
+        nextPos.y = floorY;
+        player.velocity.y = 0;
+        player.onGround = true;
+      }
+
+      const worldLimit = 198;
+      nextPos.x = Math.max(-worldLimit, Math.min(worldLimit, nextPos.x));
+      nextPos.z = Math.max(-worldLimit, Math.min(worldLimit, nextPos.z));
+
+      player.position.copy(nextPos);
+      camera.position.copy(player.position);
+      camera.rotation.order = 'YXZ';
+      camera.rotation.y = player.yaw;
+      camera.rotation.x = player.pitch;
+
+      for (let i = 0; i < collectibles.length; i++) {
+        const item = collectibles[i];
+        if (item.mesh.userData.collected) continue;
+        item.mesh.position.y = item.mesh.userData.baseY + Math.sin(time * 2.2 + i) * 0.25;
+        item.mesh.rotation.y += dt * 1.5;
+        item.light.position.copy(item.mesh.position);
+      }
+
+      const cycle = Math.sin(time * 0.03) * 0.5 + 0.5;
+      sun.intensity = 0.55 + cycle * 0.7;
+      hemiLight.intensity = 0.55 + cycle * 1.0;
+      renderer.setClearColor(new THREE.Color().setHSL(0.32, 0.25, 0.3 + cycle * 0.35));
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
